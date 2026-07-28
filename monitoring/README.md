@@ -25,3 +25,12 @@ was launched without a task identifier.
 
 Windows starts `start-agent-logging.ps1` through the per-user scheduled task
 named `Glances Agent Monitor`.
+
+Register or repair that task with:
+
+```powershell
+.\monitoring\register-agent-monitor.ps1
+```
+
+The task starts through `wscript.exe` and `run-hidden.vbs`, so the long-running
+PowerShell monitor does not create a terminal window at sign-in or restart.

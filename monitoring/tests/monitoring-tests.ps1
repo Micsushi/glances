@@ -37,4 +37,20 @@ if (($query -join ' ') -notmatch 'utilization\.gpu' -or ($query -join ' ') -notm
     throw 'NVIDIA query must include utilization and performance state.'
 }
 
+$launcherPath = Join-Path $PSScriptRoot '..\run-hidden.vbs'
+$registrationPath = Join-Path $PSScriptRoot '..\register-agent-monitor.ps1'
+if (-not (Test-Path -LiteralPath $launcherPath -PathType Leaf)) {
+    throw 'monitor task must include a windowless launcher'
+}
+if (-not (Test-Path -LiteralPath $registrationPath -PathType Leaf)) {
+    throw 'monitor task registration must be reproducible from the repository'
+}
+$registration = Get-Content -LiteralPath $registrationPath -Raw
+if ($registration -notmatch 'wscript\.exe') {
+    throw 'monitor task must start from wscript instead of a console executable'
+}
+if ($registration -match 'New-ScheduledTaskAction\s+-Execute\s+["'']?powershell') {
+    throw 'monitor task must not execute PowerShell directly'
+}
+
 Write-Output 'monitoring tests passed'
