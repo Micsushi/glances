@@ -21,6 +21,23 @@ Import-Module $moduleFile -Force
 $mutex = [System.Threading.Mutex]::new($false, 'Local\GlancesAgentMonitor')
 $hasMutex = $false
 $glancesProcess = $null
+$glancesStarted = $false
+$runtimeOutputStream = $null
+$runtimeErrorStream = $null
+$outputCopyTask = $null
+$errorCopyTask = $null
+
+function ConvertTo-ProcessArgument {
+    param([AllowEmptyString()][string]$Value)
+
+    if ($Value -match '"') {
+        throw 'Process arguments cannot contain double quotes.'
+    }
+    if ($Value.Length -eq 0 -or $Value -match '\s') {
+        return '"' + $Value + '"'
+    }
+    return $Value
+}
 
 function Stop-ProcessTree {
     param([int]$ProcessId)
@@ -60,13 +77,38 @@ try {
         '--stdout', 'cpu.total,mem.percent'
     )
 
-    $glancesProcess = Start-Process `
-        -FilePath $pythonExe `
-        -ArgumentList $glancesArguments `
-        -WindowStyle Hidden `
-        -RedirectStandardOutput $runtimeOutput `
-        -RedirectStandardError $runtimeError `
-        -PassThru
+    $processInfo = New-Object Diagnostics.ProcessStartInfo
+    $processInfo.FileName = $pythonExe
+    $processInfo.Arguments = ($glancesArguments | ForEach-Object {
+        ConvertTo-ProcessArgument ([string]$_)
+    }) -join ' '
+    $processInfo.WorkingDirectory = $repoRoot
+    $processInfo.UseShellExecute = $false
+    $processInfo.CreateNoWindow = $true
+    $processInfo.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
+    $processInfo.RedirectStandardOutput = $true
+    $processInfo.RedirectStandardError = $true
+
+    $runtimeOutputStream = [IO.File]::Open(
+        $runtimeOutput,
+        [IO.FileMode]::Create,
+        [IO.FileAccess]::Write,
+        [IO.FileShare]::ReadWrite
+    )
+    $runtimeErrorStream = [IO.File]::Open(
+        $runtimeError,
+        [IO.FileMode]::Create,
+        [IO.FileAccess]::Write,
+        [IO.FileShare]::ReadWrite
+    )
+    $glancesProcess = New-Object Diagnostics.Process
+    $glancesProcess.StartInfo = $processInfo
+    if (-not $glancesProcess.Start()) {
+        throw 'Glances failed to start.'
+    }
+    $glancesStarted = $true
+    $outputCopyTask = $glancesProcess.StandardOutput.BaseStream.CopyToAsync($runtimeOutputStream)
+    $errorCopyTask = $glancesProcess.StandardError.BaseStream.CopyToAsync($runtimeErrorStream)
 
     $previous = Get-AllProcessSnapshot
     $previousAt = Get-Date
@@ -140,8 +182,28 @@ catch {
     exit 1
 }
 finally {
-    if ($null -ne $glancesProcess -and -not $glancesProcess.HasExited) {
+    if ($glancesStarted -and -not $glancesProcess.HasExited) {
         Stop-ProcessTree -ProcessId $glancesProcess.Id
+    }
+    if ($glancesStarted) {
+        [void]$glancesProcess.WaitForExit(5000)
+    }
+    foreach ($copyTask in @($outputCopyTask, $errorCopyTask)) {
+        if ($null -ne $copyTask) {
+            try {
+                [void]$copyTask.Wait(5000)
+            } catch {
+                # The process exit path is authoritative; log copying is best effort.
+            }
+        }
+    }
+    foreach ($stream in @($runtimeOutputStream, $runtimeErrorStream)) {
+        if ($null -ne $stream) {
+            $stream.Dispose()
+        }
+    }
+    if ($null -ne $glancesProcess) {
+        $glancesProcess.Dispose()
     }
     if ($hasMutex) {
         $mutex.ReleaseMutex()

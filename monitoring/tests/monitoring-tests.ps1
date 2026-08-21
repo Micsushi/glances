@@ -39,6 +39,7 @@ if (($query -join ' ') -notmatch 'utilization\.gpu' -or ($query -join ' ') -notm
 
 $launcherPath = Join-Path $PSScriptRoot '..\run-hidden.vbs'
 $registrationPath = Join-Path $PSScriptRoot '..\register-agent-monitor.ps1'
+$workerPath = Join-Path $PSScriptRoot '..\start-agent-logging.ps1'
 if (-not (Test-Path -LiteralPath $launcherPath -PathType Leaf)) {
     throw 'monitor task must include a windowless launcher'
 }
@@ -51,6 +52,17 @@ if ($registration -notmatch 'wscript\.exe') {
 }
 if ($registration -match 'New-ScheduledTaskAction\s+-Execute\s+["'']?powershell') {
     throw 'monitor task must not execute PowerShell directly'
+}
+
+$worker = Get-Content -LiteralPath $workerPath -Raw
+if ($worker -match 'Start-Process[\s\S]*-FilePath\s+\$pythonExe') {
+    throw 'monitor worker must not launch console Python through Start-Process'
+}
+if ($worker -notmatch 'CreateNoWindow\s*=\s*\$true') {
+    throw 'monitor worker must create the Python runtime without a console window'
+}
+if ($worker -notmatch 'UseShellExecute\s*=\s*\$false') {
+    throw 'monitor worker must bypass the Windows shell for the Python runtime'
 }
 
 Write-Output 'monitoring tests passed'
