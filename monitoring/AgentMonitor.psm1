@@ -162,10 +162,7 @@ function Get-ProcessRateRows {
             -ElapsedSeconds $ElapsedSeconds `
             -LogicalProcessors $LogicalProcessors
 
-        $commandLine = $process.CommandLine
-        if ($commandLine -and $commandLine.Length -gt 500) {
-            $commandLine = $commandLine.Substring(0, 500)
-        }
+        $commandLine = ConvertTo-SafeCommandLine $process.CommandLine
         $rows += [pscustomobject]@{
             Timestamp               = $Timestamp.ToString('o')
             Pid                     = $process.Pid
@@ -183,6 +180,50 @@ function Get-ProcessRateRows {
         }
     }
     $rows
+}
+
+function ConvertTo-SafeCommandLine {
+    param(
+        [AllowNull()][string]$CommandLine,
+        [int]$MaxLength = 500
+    )
+
+    if ($null -eq $CommandLine) { return $null }
+    $safeLength = [math]::Max($MaxLength, 1)
+    $safe = $CommandLine -replace '[\x00-\x1F\x7F]', ' '
+    $sensitiveOption = '(?i)(--?(?:password|token|secret|api[-_]?key|access[-_]?token|refresh[-_]?token|credential))(\s*(?:=|:)\s*|\s+)("[^"]*"|''[^'']*''|\S+)'
+    $safe = [regex]::Replace($safe, $sensitiveOption, '$1$2<redacted>')
+    $sensitiveAssignment = '(?i)\b(password|token|secret|api[-_]?key|access[-_]?token|refresh[-_]?token)\s*=\s*("[^"]*"|''[^'']*''|\S+)'
+    $safe = [regex]::Replace($safe, $sensitiveAssignment, '$1=<redacted>')
+    if ($safe.Length -gt $safeLength) {
+        return $safe.Substring(0, $safeLength)
+    }
+    return $safe
+}
+
+function Remove-ExpiredMonitoringLogs {
+    param(
+        [Parameter(Mandatory = $true)][string]$LogDirectory,
+        [int]$RetentionDays = 14,
+        [datetime]$Now = (Get-Date)
+    )
+
+    if ($RetentionDays -lt 1 -or -not (Test-Path -LiteralPath $LogDirectory -PathType Container)) {
+        return 0
+    }
+    $cutoffUtc = $Now.ToUniversalTime().AddDays(-$RetentionDays)
+    $removed = 0
+    foreach ($file in @(Get-ChildItem -LiteralPath $LogDirectory -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Extension -in @('.csv', '.log') -and $_.LastWriteTimeUtc -lt $cutoffUtc })) {
+        try {
+            Remove-Item -LiteralPath $file.FullName -Force -ErrorAction Stop
+            $removed++
+        }
+        catch {
+            # A concurrent writer may own a log; retain it for the next pass.
+        }
+    }
+    return $removed
 }
 
 function Get-TopProcessRows {
@@ -213,4 +254,6 @@ Export-ModuleMember -Function `
     Get-SystemTelemetry, `
     Get-AllProcessSnapshot, `
     Get-ProcessRateRows, `
-    Get-TopProcessRows
+    Get-TopProcessRows, `
+    ConvertTo-SafeCommandLine, `
+    Remove-ExpiredMonitoringLogs
