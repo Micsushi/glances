@@ -38,12 +38,20 @@ $taskArguments = ($argumentList | ForEach-Object {
 }) -join " "
 
 $existingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-if ($existingTask -and $existingTask.State -eq "Running") {
+$workers = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.CommandLine -like "*-File*`"$workerPath`"*" })
+if ($workers.Count -gt 0) {
+    Set-Content -LiteralPath (Join-Path $env:LOCALAPPDATA 'GlancesAgentMonitor\stop.request') -Value 'registration restart'
+    foreach ($worker in $workers) { Wait-Process -Id $worker.ProcessId -Timeout 30 -ErrorAction Stop }
+}
+if ($existingTask) {
     Stop-ScheduledTask -InputObject $existingTask
 }
 
 $action = New-ScheduledTaskAction -Execute $wscriptPath -Argument $taskArguments
-$trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+$trigger = @(
+    (New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME)
+    (New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(5) -RepetitionInterval (New-TimeSpan -Minutes 5))
+)
 $principal = New-ScheduledTaskPrincipal `
     -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) `
     -LogonType Interactive `

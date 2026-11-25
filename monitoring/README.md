@@ -13,6 +13,8 @@ The files are:
 - `runtime-summary-v2-YYYYMMDD.csv`: CPU, disk I/O, memory, and process counts
   grouped by executable.
 - `glances-*.err.log` and `startup-errors.log`: diagnostic errors.
+- `health-YYYYMMDD.csv`: successful-sample timestamps, monitor PID, and free space on the log drive.
+- `lifecycle.log`: monitor starts and exits. Failures include their PowerShell stack in `startup-errors.log` and are also sent to the Windows Application event log (source WSH), best effort if disk space is exhausted.
 
 Glances remains active as an independent CPU/memory health signal. A compact
 native Windows sampler owns the durable CSV files because Glances' CSV exporter
@@ -34,3 +36,6 @@ Register or repair that task with:
 
 The task starts through `wscript.exe` and `run-hidden.vbs`, so the long-running
 PowerShell monitor does not create a terminal window at sign-in or restart.
+The launcher retries failed workers every 60 seconds. A five-minute scheduled
+trigger also recovers a stopped launcher; overlapping task instances are ignored.
+To deliberately keep monitoring stopped, disable the scheduled task before stopping it.

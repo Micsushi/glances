@@ -8,6 +8,7 @@ $repoRoot = 'C:\Users\sushi\Documents\Github\glances'
 $pythonExe = Join-Path $repoRoot '.venv\Scripts\python.exe'
 $configFile = Join-Path $repoRoot 'monitoring\glances-agent.conf'
 $logDirectory = Join-Path $env:LOCALAPPDATA 'GlancesAgentMonitor\logs'
+$stopPath = Join-Path $env:LOCALAPPDATA 'GlancesAgentMonitor\stop.request'
 $sampleSeconds = 10
 $topProcessCount = 10
 $logicalProcessors = [Environment]::ProcessorCount
@@ -55,12 +56,14 @@ try {
     if (-not $hasMutex) {
         exit 0
     }
+    Remove-Item -LiteralPath $stopPath -ErrorAction SilentlyContinue
 
     if (-not (Test-Path -LiteralPath $pythonExe)) {
         throw "Glances Python environment not found: $pythonExe"
     }
 
     $startedAt = Get-Date -Format 'yyyyMMdd-HHmmss'
+    "$(Get-Date -Format o) START pid=$PID" | Add-Content -LiteralPath (Join-Path $logDirectory 'lifecycle.log')
     $runtimeOutput = Join-Path $logDirectory "glances-$startedAt.out.log"
     $runtimeError = Join-Path $logDirectory "glances-$startedAt.err.log"
 
@@ -116,6 +119,7 @@ try {
 
     while ($true) {
         Start-Sleep -Seconds $sampleSeconds
+        if (Test-Path -LiteralPath $stopPath) { break }
 
         if ($glancesProcess.HasExited) {
             throw "Glances exited unexpectedly with code $($glancesProcess.ExitCode). See $runtimeError"
@@ -133,6 +137,11 @@ try {
         $topRows = @(Get-TopProcessRows -Rows $rows -Count $topProcessCount)
 
         $day = $sampledAt.ToString('yyyyMMdd')
+        [pscustomobject]@{
+            Timestamp = $sampledAt.ToString('o')
+            MonitorPid = $PID
+            LogDriveFreeMB = [math]::Round(([IO.DriveInfo]::new([IO.Path]::GetPathRoot($logDirectory))).AvailableFreeSpace / 1MB, 1)
+        } | Export-Csv -LiteralPath (Join-Path $logDirectory "health-$day.csv") -NoTypeInformation -Append
         $systemCsv = Join-Path $logDirectory "system-$day.csv"
         $topCsv = Join-Path $logDirectory "top-processes-v2-$day.csv"
         $summaryCsv = Join-Path $logDirectory "runtime-summary-v2-$day.csv"
@@ -177,11 +186,16 @@ try {
     exit 0
 }
 catch {
+    $failure = ($_ | Out-String) + $_.ScriptStackTrace
     $failureLog = Join-Path $logDirectory 'startup-errors.log'
-    "$(Get-Date -Format o) $($_.Exception.Message)" | Add-Content -LiteralPath $failureLog
+    try { "$(Get-Date -Format o) pid=$PID $failure" | Add-Content -LiteralPath $failureLog } catch {}
+    try { (New-Object -ComObject WScript.Shell).LogEvent(1, "Glances monitor failed: $failure") | Out-Null } catch {}
     exit 1
 }
 finally {
+    if ($hasMutex) {
+        try { "$(Get-Date -Format o) EXIT pid=$PID" | Add-Content -LiteralPath (Join-Path $logDirectory 'lifecycle.log') } catch {}
+    }
     if ($glancesStarted -and -not $glancesProcess.HasExited) {
         Stop-ProcessTree -ProcessId $glancesProcess.Id
     }

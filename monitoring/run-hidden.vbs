@@ -13,7 +13,14 @@ For index = 1 To arguments.Count - 1
 Next
 
 Set shell = CreateObject("WScript.Shell")
-exitCode = shell.Run(command, 0, True)
+Do
+    exitCode = shell.Run(command, 0, True)
+    If exitCode = 0 Then Exit Do
+    On Error Resume Next
+    shell.LogEvent 1, "Glances monitor exited with code " & exitCode & ". Restarting in 60 seconds."
+    On Error GoTo 0
+    WScript.Sleep 60000
+Loop
 WScript.Quit exitCode
 
 Function QuoteArgument(value)
