@@ -11,11 +11,13 @@ $logDirectory = Join-Path $env:LOCALAPPDATA 'GlancesAgentMonitor\logs'
 $stopPath = Join-Path $env:LOCALAPPDATA 'GlancesAgentMonitor\stop.request'
 $sampleSeconds = 10
 $topProcessCount = 10
+$retentionDays = 14
 $logicalProcessors = [Environment]::ProcessorCount
 $moduleFile = Join-Path $repoRoot 'monitoring\AgentMonitor.psm1'
 
 New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
 Import-Module $moduleFile -Force
+Remove-ExpiredMonitoringLogs -LogDirectory $logDirectory -RetentionDays $retentionDays | Out-Null
 
 # The scheduled task also rejects overlapping runs, but the mutex covers
 # accidental manual launches of this script.

@@ -16,6 +16,11 @@ The files are:
 - `health-YYYYMMDD.csv`: successful-sample timestamps, monitor PID, and free space on the log drive.
 - `lifecycle.log`: monitor starts and exits. Failures include their PowerShell stack in `startup-errors.log` and are also sent to the Windows Application event log (source WSH), best effort if disk space is exhausted.
 
+CSV and diagnostic log files older than 14 days are pruned when the monitor
+starts. Process command lines are capped at 500 characters and redact common
+password, token, secret, API-key, and credential option values before they are
+written.
+
 Glances remains active as an independent CPU/memory health signal. A compact
 native Windows sampler owns the durable CSV files because Glances' CSV exporter
 can stay buffered at zero bytes on Windows and its full process export is too
